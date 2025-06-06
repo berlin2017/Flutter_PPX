@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/comment.dart';
-import '../services/cache_service.dart';
+import '../services/cache_service.dart'; // TODO: Review if CacheService is still needed here for comment likes
 import '../utils/date_formatter.dart';
 
 class CommentItem extends StatefulWidget {
   final Comment comment;
   final VoidCallback? onReplyTap;
   final bool isReply;
-  final Function(bool) onLikeChanged;
+  final Function(bool) onLikeChanged; // Callback when like state changes
 
   const CommentItem({
     super.key,
@@ -22,33 +22,71 @@ class CommentItem extends StatefulWidget {
 }
 
 class _CommentItemState extends State<CommentItem> {
-  final CacheService _cacheService = CacheService.instance;
-  bool _isLiked = false;
-  int _likeCount = 0;
+  // Local state for optimistic UI updates for likes
+  // These will be initialized from widget.comment.isLiked and widget.comment.likes
+  bool _isLikedLocal = false;
+  int _likeCountLocal = 0;
+
+  // TODO: If CacheService is only for comment likes, and if comment likes are
+  // now handled by PostRepository/DetailScreen, CacheService might not be needed here.
+  // For now, _cacheService.toggleCommentLike is assumed to exist and work.
+  // final CacheService _cacheService = CacheService.instance;
 
   @override
   void initState() {
     super.initState();
-    _isLiked = widget.comment.isLiked;
-    _likeCount = widget.comment.likes;
+    // Initialize local like state from the passed comment object
+    _isLikedLocal = widget.comment.isLiked;
+    _likeCountLocal = widget.comment.likes;
+  }
+
+  // This method is called when the widget's properties change.
+  // We need this to ensure that if the parent rebuilds CommentItem with new data
+  // (e.g., after a global state update for likes), our local state reflects that.
+  @override
+  void didUpdateWidget(covariant CommentItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.comment.isLiked != oldWidget.comment.isLiked ||
+        widget.comment.likes != oldWidget.comment.likes) {
+      setState(() {
+        _isLikedLocal = widget.comment.isLiked;
+        _likeCountLocal = widget.comment.likes;
+      });
+    }
   }
 
   Future<void> _handleLike() async {
-    final newLikeState = !_isLiked;
-    
+    final originalIsLiked = _isLikedLocal;
+    final originalLikeCount = _likeCountLocal;
+    final newLikeState = !_isLikedLocal;
+
+    // Optimistic UI update
     setState(() {
-      _isLiked = newLikeState;
-      _likeCount += newLikeState ? 1 : -1;
+      _isLikedLocal = newLikeState;
+      _likeCountLocal += newLikeState ? 1 : -1;
     });
 
+    // Call the callback provided by the parent (e.g., DetailScreen)
+    // This callback should handle the actual logic of persisting the like state
+    // and potentially updating the global state or repository.
+    widget.onLikeChanged(newLikeState);
+
+    // The following try-catch block using _cacheService might be redundant
+    // if DetailScreen._likeComment (triggered by onLikeChanged) handles everything.
+    // Review if direct cache interaction is needed here anymore.
+    // For now, keeping it as per original structure but with a note.
+    /*
     try {
+      // Assuming toggleCommentLike in CacheService updates some local cache.
+      // This might conflict or be duplicative if DetailScreen also manages this.
       await _cacheService.toggleCommentLike(widget.comment.id, newLikeState);
-      widget.onLikeChanged(newLikeState);
+      // The onLikeChanged callback above should be the primary mechanism
+      // for notifying the parent to handle the like logic.
     } catch (e) {
-      // 如果操作失败，恢复状态
+      // If operation fails, revert optimistic UI update
       setState(() {
-        _isLiked = !newLikeState;
-        _likeCount -= newLikeState ? 1 : -1;
+        _isLikedLocal = originalIsLiked;
+        _likeCountLocal = originalLikeCount;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -56,8 +94,9 @@ class _CommentItemState extends State<CommentItem> {
         );
       }
     }
+    */
   }
-  // 移除 _formatTimestamp 方法，使用 DateFormatter 工具类
+
   void _showMoreOptions() {
     showModalBottomSheet(
       context: context,
@@ -70,7 +109,7 @@ class _CommentItemState extends State<CommentItem> {
               title: const Text('编辑评论'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Implement edit functionality
+                // TODO: Implement edit functionality (e.g., call a callback passed from parent)
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('编辑功能即将上线')),
                 );
@@ -81,7 +120,7 @@ class _CommentItemState extends State<CommentItem> {
               title: const Text('删除评论'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Implement delete functionality
+                // TODO: Implement delete functionality (e.g., call a callback passed from parent)
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('删除功能即将上线')),
                 );
@@ -108,9 +147,14 @@ class _CommentItemState extends State<CommentItem> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     
+    // Use local state for displaying likes, which reflects optimistic updates
+    // and updates from the parent widget.
+    final displayIsLiked = _isLikedLocal;
+    final displayLikeCount = _likeCountLocal;
+
     return Padding(
       padding: EdgeInsets.only(
-        left: widget.isReply ? 56.0 : 16.0,
+        left: widget.isReply ? 40.0 : 16.0, // Adjusted reply indent slightly
         right: 16.0,
         top: 8.0,
         bottom: 8.0,
@@ -119,8 +163,18 @@ class _CommentItemState extends State<CommentItem> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
-            radius: 16,
-            backgroundImage: NetworkImage(widget.comment.userAvatar),
+            radius: widget.isReply ? 14 : 16, // Smaller avatar for replies
+            backgroundImage: (widget.comment.userAvatar != null && widget.comment.userAvatar!.isNotEmpty)
+                ? NetworkImage(widget.comment.userAvatar!)
+                : null,
+            backgroundColor: Colors.grey[300], // Background for the avatar circle
+            child: (widget.comment.userAvatar == null || widget.comment.userAvatar!.isEmpty)
+                ? Icon(
+                    Icons.person,
+                    size: widget.isReply ? 12 : 16,
+                    color: Colors.white, // Icon color that contrasts with backgroundColor
+                  )
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -131,7 +185,9 @@ class _CommentItemState extends State<CommentItem> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
-                      child: Row(
+                      child: Wrap( // Using Wrap to prevent overflow if name and date are too long
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8.0, // Space between name and date
                         children: [
                           Text(
                             widget.comment.userName,
@@ -139,27 +195,29 @@ class _CommentItemState extends State<CommentItem> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(width: 8),
                           Text(
-                            DateFormatter.formatTimestamp(widget.comment.timestamp),
+                            DateFormatter.formatRelativeTime(widget.comment.timestamp),
                             style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.grey,
+                              color: Colors.grey[600],
                             ),
                           ),
                         ],
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.more_horiz),
-                      onPressed: _showMoreOptions,
-                      iconSize: 20,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
+                    // Only show more options if it's not a reply (or based on your logic)
+                    // and if current user is the author of the comment (TODO: add this check)
+                    if (!widget.isReply) 
+                      IconButton(
+                        icon: const Icon(Icons.more_horiz),
+                        onPressed: _showMoreOptions,
+                        iconSize: 20,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text(widget.comment.content),
+                Text(widget.comment.content, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -168,13 +226,13 @@ class _CommentItemState extends State<CommentItem> {
                       child: Row(
                         children: [
                           Icon(
-                            _isLiked ? Icons.favorite : Icons.favorite_border,
+                            displayIsLiked ? Icons.favorite : Icons.favorite_border,
                             size: 16,
-                            color: _isLiked ? Colors.red : Colors.grey,
+                            color: displayIsLiked ? Colors.red : Colors.grey,
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            _likeCount.toString(),
+                            displayLikeCount.toString(),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: Colors.grey,
                             ),
@@ -182,21 +240,30 @@ class _CommentItemState extends State<CommentItem> {
                         ],
                       ),
                     ),
-                    if (!widget.isReply) ...[
-                      const SizedBox(width: 16),
+                    // Only show reply button if it's not already a reply and onReplyTap is provided
+                    if (!widget.isReply && widget.onReplyTap != null) ...[
+                      const SizedBox(width: 24), // Increased spacing
                       GestureDetector(
                         onTap: widget.onReplyTap,
                         child: Row(
                           children: [
                             const Icon(
-                              Icons.reply,
+                              Icons.reply_outlined, // Using outlined version
                               size: 16,
                               color: Colors.grey,
                             ),
                             const SizedBox(width: 4),
+                            // Show "Reply" text or reply count if available
                             if (widget.comment.replyCount > 0)
                               Text(
                                 '${widget.comment.replyCount} 条回复',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.grey,
+                                ),
+                              )
+                            else
+                               Text(
+                                '回复', // Show "Reply" if no replies yet
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: Colors.grey,
                                 ),
@@ -207,6 +274,9 @@ class _CommentItemState extends State<CommentItem> {
                     ],
                   ],
                 ),
+                // TODO: Implement display of replies if this comment has replies
+                // if (widget.comment.replies != null && widget.comment.replies.isNotEmpty)
+                //   _buildRepliesSection(widget.comment.replies) 
               ],
             ),
           ),

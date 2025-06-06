@@ -34,7 +34,7 @@ class _MainScreenState extends State<MainScreen> {
       if (_lastTapTime != null && 
           now.difference(_lastTapTime!) <= const Duration(milliseconds: 300)) {
         // 双击检测 - 300ms内的两次点击
-        _homeScreenKey.currentState?.scrollToTop();
+        _homeScreenKey.currentState?.scrollToTopAndRefresh();
         _lastTapTime = null;
       } else {
         _lastTapTime = now;

@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 class User {
   final String id;
   final String name;
-  final String avatar;
+  final String? avatar;
   final String? bio;
   final int followers;
   final int following;

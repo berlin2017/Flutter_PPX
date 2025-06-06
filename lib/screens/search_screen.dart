@@ -19,6 +19,7 @@ class _SearchScreenState extends State<SearchScreen> {
   List<String> _searchHistory = [];
   List<Post> _searchResults = [];
   bool _isSearching = false;
+  final String _defaultAvatarUrl = 'https://picsum.photos/seed/default_avatar/50/50'; // Default avatar
 
   @override
   void initState() {
@@ -43,10 +44,9 @@ class _SearchScreenState extends State<SearchScreen> {
       _searchResults = [];
     });
 
-    // 保存搜索历史
     await _searchService.insertSearch(query);
     
-    // 模拟搜索结果
+    // Simulate search results
     await Future.delayed(const Duration(seconds: 1));
     final results = List.generate(
       20,
@@ -54,15 +54,17 @@ class _SearchScreenState extends State<SearchScreen> {
         id: 'search_$index',
         title: '搜索结果 $index',
         content: '这是关于"$query"的搜索结果 $index',
+        authorId: 'author_id_search_$index', // Added authorId
         authorName: '作者 $index',
-        authorAvatar: 'https://picsum.photos/50/50?random=$index',
+        authorAvatar: index % 5 == 0 ? null : 'https://picsum.photos/50/50?random=search_$index', // Make some avatars null
         likes: 100 + index,
         dislikes: 10 + index,
-        comments: 20 + index,
+        commentsCount: 20 + index,
         shares: 30 + index,
         type: PostType.values[index % 3],
-        thumbnail: index % 3 != 0 ? 'https://picsum.photos/400/200?random=$index' : null,
+        thumbnail: index % 3 != 0 ? 'https://picsum.photos/400/200?random=search_thumb_$index' : null,
         videoUrl: index % 3 == 2 ? 'https://example.com/video$index.mp4' : null,
+        publishTime: DateTime.now().subtract(Duration(minutes: index * 10)), // Added publishTime
       ),
     );
 
@@ -73,7 +75,6 @@ class _SearchScreenState extends State<SearchScreen> {
       });
     }
 
-    // 刷新搜索历史
     _loadSearchHistory();
   }
 
@@ -88,19 +89,21 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildSearchItem(Post post) {
+    final String avatarUrl = post.authorAvatar?.isNotEmpty == true ? post.authorAvatar! : _defaultAvatarUrl;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: InkWell(
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => DetailScreen(post: post)),
+            MaterialPageRoute(builder: (context) => DetailScreen(postId: post.id)),
           );
         },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (post.thumbnail != null)
+            if (post.thumbnail != null && post.thumbnail!.isNotEmpty)
               Stack(
                 children: [
                   CachedNetworkImage(
@@ -108,12 +111,12 @@ class _SearchScreenState extends State<SearchScreen> {
                     width: double.infinity,
                     height: 200,
                     fit: BoxFit.cover,
-                    placeholder: (context, url) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
-                    errorWidget: (context, url, error) => const Center(
-                      child: Icon(Icons.error),
-                    ),
+                    placeholder: (context, url) => Container(
+                        width: double.infinity, height: 200, color: Colors.grey[300],
+                        child: const Center(child: CircularProgressIndicator())),
+                    errorWidget: (context, url, error) => Container(
+                        width: double.infinity, height: 200, color: Colors.grey[300],
+                        child: const Center(child: Icon(Icons.error))),
                   ),
                   if (post.type == PostType.video)
                     Positioned.fill(
@@ -124,7 +127,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => DetailScreen(post: post),
+                                builder: (context) => DetailScreen(postId: post.id),
                               ),
                             );
                           },
@@ -149,7 +152,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    post.title,
+                    post.title ?? '[无标题]', // Handle null title
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -157,7 +160,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    post.content,
+                    post.content ?? '', // Handle null content
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -170,9 +173,9 @@ class _SearchScreenState extends State<SearchScreen> {
                             context,
                             MaterialPageRoute(
                               builder: (context) => UserProfileScreen(
-                                userId: post.authorId ?? post.authorName,
+                                userId: post.authorId, // Ensure authorId is passed
                                 userName: post.authorName,
-                                userAvatar: post.authorAvatar,
+                                userAvatar: avatarUrl, // Pass the resolved avatarUrl
                               ),
                             ),
                           );
@@ -180,8 +183,15 @@ class _SearchScreenState extends State<SearchScreen> {
                         child: Row(
                           children: [
                             CircleAvatar(
-                              backgroundImage: CachedNetworkImageProvider(post.authorAvatar),
+                              backgroundImage: CachedNetworkImageProvider(avatarUrl), // Use resolved avatarUrl
                               radius: 12,
+                              // Fallback for CircleAvatar if CachedNetworkImageProvider fails (though CNI handles errors)
+                              onBackgroundImageError: (_ , __) {
+                                // Optionally log error or handle differently
+                              },
+                              child: avatarUrl == _defaultAvatarUrl && post.authorAvatar?.isNotEmpty != true 
+                                  ? const Icon(Icons.person, size: 12) // Show person icon on default
+                                  : null,
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -196,7 +206,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       ),
                       const Spacer(),
                       Text(
-                        '${post.likes}点赞 · ${post.comments}评论',
+                        '${post.likes}点赞 · ${post.commentsCount}评论', // Use commentsCount from Post model
                         style: TextStyle(
                           color: Colors.grey[600],
                           fontSize: 12,
@@ -220,11 +230,13 @@ class _SearchScreenState extends State<SearchScreen> {
       );
     }
 
-    if (_searchResults.isEmpty) {
+    if (_searchResults.isEmpty && _searchController.text.isNotEmpty) { // Show message if search was done but no results
       return const Center(
         child: Text('暂无搜索结果'),
       );
     }
+    // If search results are empty and search text is empty, it means we should show history (or initial state)
+    // This case is handled by the main body logic.
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
@@ -278,8 +290,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   _searchController.text = query;
                   _handleSearch(query);
                 },
-              );
-            },
+              );            },
           ),
         ),
       ],
@@ -295,15 +306,29 @@ class _SearchScreenState extends State<SearchScreen> {
           decoration: InputDecoration(
             hintText: '搜索内容',
             border: InputBorder.none,
-            suffixIcon: IconButton(
-              icon: const Icon(Icons.search),
-              onPressed: () => _handleSearch(_searchController.text),
-            ),
+            suffixIcon: _searchController.text.isNotEmpty 
+                ? IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      _searchController.clear();
+                      // Optionally reset search results when clearing the text field
+                      setState(() {
+                        _searchResults = [];
+                      });
+                    },
+                  )
+                : const Icon(Icons.search), // Show search icon if text is empty
           ),
+          onChanged: (text) {
+            // Update UI to show clear button when text is entered
+            setState(() {});
+          },
           onSubmitted: _handleSearch,
         ),
       ),
-      body: _searchResults.isEmpty
+      // Show search history if search results are empty AND search controller is empty
+      // Otherwise, show search results (which might be "no results" message or actual items)
+      body: _searchController.text.isEmpty && _searchResults.isEmpty
           ? _buildSearchHistory()
           : _buildSearchResults(),
     );

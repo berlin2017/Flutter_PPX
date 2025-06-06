@@ -1,468 +1,119 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import '../models/post.dart';
-import '../models/post_type.dart';
-import '../services/cache_service.dart';
-import 'package:share_plus/share_plus.dart';
-import '../screens/detail_screen.dart';
-import '../screens/user_profile_screen.dart';
-import 'package:video_player/video_player.dart';
+import 'package:video_app/models/post.dart';
+import 'package:video_app/models/post_type.dart';
+import 'package:video_app/screens/detail_screen.dart';
+import 'package:video_app/utils/date_formatter.dart';
+import 'package:video_app/utils/number_formatter.dart';
+import 'package:video_app/widgets/expandable_text.dart';
+import 'package:video_player/video_player.dart'; // Assuming you use this for video playback
 
 class PostCard extends StatefulWidget {
   final Post post;
+  final VoidCallback? onTap; // Optional: if the whole card is tappable for navigation
 
   const PostCard({
     super.key,
     required this.post,
-    // Removed onTap parameter
+    this.onTap,
   });
 
   @override
   State<PostCard> createState() => _PostCardState();
 }
 
-class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _scaleAnimation;
-  bool _isLiked = false;
-  bool _isDisliked = false;
-  int _likes = 0;
-  int _dislikes = 0;
-  final CacheService _cacheService = CacheService.instance;
-  bool _showCommentInput = false;
-  final TextEditingController _commentController = TextEditingController();
-  VideoPlayerController? _videoController;
-  bool _isPlaying = false;
-  bool _isVideoInitialized = false;
+class _PostCardState extends State<PostCard> {
+  VideoPlayerController? _videoPlayerController;
+  bool _isPlayerInitialized = false;
+  bool _isLiked = false; // Local like state for immediate UI feedback
+  int _likesCount = 0;    // Local likes count for immediate UI feedback
+
   @override
   void initState() {
     super.initState();
-    _likes = widget.post.likes;
-    _dislikes = widget.post.dislikes;
-    
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-    
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeInOut,
-      ),
-    );
+    _isLiked = widget.post.isLikedByCurrentUser;
+    _likesCount = widget.post.likes;
 
-    _loadInteractionState();
-
-    if (widget.post.type == PostType.video && widget.post.videoUrl != null) {
-      _initializeVideoController();
-    }
-  }
-
-  Future<void> _initializeVideoController() async {
-    _videoController = VideoPlayerController.networkUrl(
-      Uri.parse(widget.post.videoUrl!)
-    );
-    
-    try {
-      await _videoController!.initialize();
-      if (mounted) {
-        setState(() {
-          _isVideoInitialized = true;
+    final String? videoUrl = widget.post.videoUrl; // Use local variable
+    if (widget.post.type == PostType.video && videoUrl != null && videoUrl.isNotEmpty) {
+      _videoPlayerController = VideoPlayerController.networkUrl(Uri.parse(videoUrl)) // Use local variable
+        ..initialize().then((_) {
+          if (mounted) {
+            setState(() {
+              _isPlayerInitialized = true;
+            });
+          }
+        }).catchError((error) {
+           debugPrint("Error initializing video player: $error for url: $videoUrl");
+            if (mounted) {
+              setState(() {
+                _isPlayerInitialized = false; // Explicitly set to false on error
+              });
+            }
         });
-      }
-    } catch (e) {
-      print('Error initializing video: $e');
-    }
-  }
-
-  void _togglePlay() {
-    if (_videoController != null && _isVideoInitialized) {
-      setState(() {
-        _isPlaying = !_isPlaying;
-        _isPlaying ? _videoController!.play() : _videoController!.pause();
-      });
-    }
-  }
-
-  void _handleLongPressStart() {
-    if (_videoController != null && _isVideoInitialized) {
-      setState(() {
-        _videoController!.setPlaybackSpeed(2.0);
-      });
-    }
-  }
-
-  void _handleLongPressEnd() {
-    if (_videoController != null && _isVideoInitialized) {
-      setState(() {
-        _videoController!.setPlaybackSpeed(1.0);
-      });
-    }
-  }
-
-  Future<void> _loadInteractionState() async {
-    final state = await _cacheService.getPostInteractionState(widget.post.id);
-    if (mounted) {
-      setState(() {
-        _isLiked = state['isLiked']!;
-        _isDisliked = state['isDisliked']!;
-        // 更新计数,考虑已有的交互状态
-        if (_isLiked) _likes++;
-        if (_isDisliked) _dislikes++;
-      });
     }
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
-    _commentController.dispose();
-    _videoController?.dispose();
+    _videoPlayerController?.dispose();
     super.dispose();
   }
 
-  Future<void> _handleLike() async {
-    if (_isDisliked) {
-      setState(() {
-        _isDisliked = false;
-        _dislikes = widget.post.dislikes;
-      });
-    }
-
+  void _toggleLike() {
+    // TODO: Integrate with actual like functionality (e.g., call PostRepository)
     setState(() {
+      if (_isLiked) {
+        _likesCount--;
+      } else {
+        _likesCount++;
+      }
       _isLiked = !_isLiked;
-      _likes = widget.post.likes + (_isLiked ? 1 : 0);
     });
-
-    _animationController.forward().then((_) {
-      _animationController.reverse();
-    });
-
-    // 保存交互状态
-    await _cacheService.updatePostInteraction(widget.post.id, _isLiked, false);
+    // Placeholder for API call
+    debugPrint("Post ${widget.post.id} like toggled. New status: $_isLiked, New count: $_likesCount");
   }
 
-  Future<void> _handleDislike() async {
-    if (_isLiked) {
-      setState(() {
-        _isLiked = false;
-        _likes = widget.post.likes;
-      });
+  void _navigateToDetail() {
+    if (widget.onTap != null) {
+      widget.onTap!(); // This onTap is from the constructor, assuming it's correctly handled by the parent
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => DetailScreen(postId: widget.post.id)),
+      );
     }
-
-    setState(() {
-      _isDisliked = !_isDisliked;
-      _dislikes = widget.post.dislikes + (_isDisliked ? 1 : 0);
-    });
-
-    _animationController.forward().then((_) {
-      _animationController.reverse();
-    });
-
-    // 保存交互状态
-    await _cacheService.updatePostInteraction(widget.post.id, false, _isDisliked);
-  }
-
-  void _handleComment() {
-    setState(() {
-      _showCommentInput = !_showCommentInput;
-    });
-    if (_showCommentInput) {
-      // 显示底部输入框
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        builder: (context) {
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom,
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _commentController,
-                    decoration: const InputDecoration(
-                      hintText: '写下你的评论...',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 3,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('取消'),
-                      ),
-                      const SizedBox(width: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          // TODO: 处理评论提交
-                          if (_commentController.text.isNotEmpty) {
-                            // 这里可以添加评论提交的逻辑
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('评论已发布')),
-                            );
-                            _commentController.clear();
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: const Text('发布'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ).whenComplete(() {
-        setState(() {
-          _showCommentInput = false;
-        });
-      });
-    }
-  }
-
-  void _handleShare() {
-    Share.share(
-      '${widget.post.title}\n${widget.post.content}',
-      subject: widget.post.title,
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(  // Added InkWell for overall card tap
-      onTap: () {
-        // Stop video if playing before navigating
-        if (_isPlaying && _videoController != null) {
-          _videoController!.pause();
-          setState(() {
-            _isPlaying = false;
-          });
-        }
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DetailScreen(post: widget.post),
-          ),
-        );
-      },
-      child: Card(
-        margin: const EdgeInsets.only(bottom: 8),
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
+      elevation: 2.0,
+      clipBehavior: Clip.antiAlias, // Ensures content respects card's rounded corners
+      child: InkWell(
+        onTap: _navigateToDetail,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Author info - InkWell removed
-            ListTile(
-              leading: GestureDetector(
-                onTap: () { // Kept GestureDetector for profile navigation
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => UserProfileScreen(
-                        userId: widget.post.authorId ?? widget.post.authorName,
-                        userName: widget.post.authorName,
-                        userAvatar: widget.post.authorAvatar,
-                      ),
-                    ),
-                  );
-                },
-                child: CircleAvatar(
-                  backgroundImage: CachedNetworkImageProvider(widget.post.authorAvatar),
-                ),
-              ),
-              title: GestureDetector( // Kept GestureDetector for profile navigation
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => UserProfileScreen(
-                        userId: widget.post.authorId ?? widget.post.authorName,
-                        userName: widget.post.authorName,
-                        userAvatar: widget.post.authorAvatar,
-                      ),
-                    ),
-                  );
-                },
-                child: Text(widget.post.authorName),
-              ),
-              subtitle: Text(widget.post.title),
+            _PostCardHeader(post: widget.post),
+            _PostCardContent(
+              post: widget.post,
+              videoPlayerController: _videoPlayerController,
+              isPlayerInitialized: _isPlayerInitialized,
             ),
-            // Content area
-            if (widget.post.type == PostType.text)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text(widget.post.content),
-              )
-            else if (widget.post.type == PostType.image)
-              // InkWell removed from CachedNetworkImage
-              CachedNetworkImage(
-                imageUrl: widget.post.thumbnail!,
-                width: double.infinity,
-                height: 200,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                errorWidget: (context, url, error) => const Center(
-                  child: Icon(Icons.error),
-                ),
-              )
-            else if (widget.post.type == PostType.video)
-              GestureDetector( // This GestureDetector handles video play/pause and prevents outer InkWell tap
-                onTap: () {
-                  if (_videoController == null || !_isVideoInitialized) {
-                    _initializeVideoController().then((_) {
-                      if (mounted) {
-                        setState(() {
-                          _isPlaying = true;
-                          _videoController?.play();
-                        });
-                      }
-                    });
-                  } else {
-                    _togglePlay();
-                  }
-                },
-                onDoubleTap: () { // Optional: Keep double tap for details as a shortcut
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => DetailScreen(post: widget.post),
-                    ),
-                  );
-                },
-                onLongPressStart: (_) => _handleLongPressStart(),
-                onLongPressEnd: (_) => _handleLongPressEnd(),
-                behavior: HitTestBehavior.opaque, // Crucial: Prevents tap from reaching the outer InkWell
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (_isVideoInitialized)
-                      AspectRatio(
-                        aspectRatio: _videoController!.value.aspectRatio,
-                        child: VideoPlayer(_videoController!),
-                      ),
-                    if (!_isVideoInitialized || !_isPlaying)
-                      CachedNetworkImage(
-                        imageUrl: widget.post.thumbnail!,
-                        width: double.infinity,
-                        height: 300,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          height: 300,
-                          color: Colors.grey[200],
-                          child: const Center(child: CircularProgressIndicator()),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          height: 300,
-                          color: Colors.grey[200],
-                          child: const Center(child: Icon(Icons.error)),
-                        ),
-                      ),
-                    // Play/Pause button
-                    AnimatedOpacity(
-                      opacity: !_isPlaying || !_isVideoInitialized ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 300),
-                      child: Container(
-                        width: 60,
-                        height: 60,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          _isPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.white,
-                          size: 36,
-                        ),
-                      ),
-                    ),
-                    // Progress bar
-                    if (_isVideoInitialized)
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          color: Colors.black.withOpacity(0.5),
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              const SizedBox(width: 8),
-                              ValueListenableBuilder(
-                                valueListenable: _videoController!,
-                                builder: (context, VideoPlayerValue value, child) {
-                                  return Text(
-                                    '${value.position.inMinutes}:${(value.position.inSeconds % 60).toString().padLeft(2, '0')} / ${value.duration.inMinutes}:${(value.duration.inSeconds % 60).toString().padLeft(2, '0')}',
-                                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                                  );
-                                },
-                              ),
-                              Expanded(
-                                child: VideoProgressIndicator(
-                                  _videoController!,
-                                  allowScrubbing: true,
-                                  colors: const VideoProgressColors(
-                                    playedColor: Colors.red,
-                                    bufferedColor: Colors.white24,
-                                    backgroundColor: Colors.white12,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            // Interaction buttons bar - InkWell removed
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  ScaleTransition(
-                    scale: _scaleAnimation,
-                    child: _InteractionButton(
-                      icon: _isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                      label: '$_likes',
-                      color: _isLiked ? Colors.red : null,
-                      onTap: _handleLike,
-                    ),
-                  ),
-                  ScaleTransition(
-                    scale: _scaleAnimation,
-                    child: _InteractionButton(
-                      icon: _isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                      label: '$_dislikes',
-                      color: _isDisliked ? Colors.red : null,
-                      onTap: _handleDislike,
-                    ),
-                  ),
-                  _InteractionButton(
-                    icon: Icons.comment_outlined,
-                    label: '${widget.post.comments}',
-                    color: _showCommentInput ? Colors.red : null,
-                    onTap: _handleComment,
-                  ),
-                  _InteractionButton(
-                    icon: Icons.share_outlined,
-                    label: '${widget.post.shares}',
-                    onTap: _handleShare,
-                  ),
-                ],
-              ),
+            _PostCardFooter(
+              post: widget.post,
+              isLiked: _isLiked, // Pass local state
+              likesCount: _likesCount, // Pass local state
+              onLikeTap: _toggleLike,
+              onCommentTap: () {
+                _navigateToDetail(); // Comments section is usually on detail screen
+                debugPrint('Comment button tapped for post ${widget.post.id}');
+              },
+              onShareTap: () {
+                // TODO: Implement share functionality
+                debugPrint('Share button tapped for post ${widget.post.id}');
+              },
             ),
           ],
         ),
@@ -471,32 +122,228 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
   }
 }
 
-class _InteractionButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color? color;
+class _PostCardHeader extends StatelessWidget {
+  final Post post;
 
-  const _InteractionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.color,
+  const _PostCardHeader({required this.post});
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final String? authorAvatar = post.authorAvatar; 
+
+    return Padding(
+      padding: const EdgeInsets.all(12.0),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundImage: (authorAvatar != null && authorAvatar.isNotEmpty)
+                ? NetworkImage(authorAvatar) 
+                : null,
+            child: (authorAvatar == null || authorAvatar.isEmpty)
+                ? Text(post.authorName.isNotEmpty ? post.authorName[0].toUpperCase() : 'U')
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(post.authorName, style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                Text(
+                  DateFormatter.formatRelativeTime(post.publishTime),
+                  style: textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.more_vert),
+            onPressed: () {
+              // TODO: Implement more options (e.g., report, hide)
+              debugPrint('More options tapped for post ${post.id}');
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PostCardContent extends StatelessWidget {
+  final Post post;
+  final VideoPlayerController? videoPlayerController;
+  final bool isPlayerInitialized;
+
+  const _PostCardContent({
+    required this.post,
+    this.videoPlayerController,
+    required this.isPlayerInitialized,
   });
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 4),
-            Text(label, style: TextStyle(color: color)),
-          ],
-        ),
+    final textTheme = Theme.of(context).textTheme;
+    final String? title = post.title;
+    final String? content = post.content;
+    final String? thumbnail = post.thumbnail;
+    final List<String>? tags = post.tags;
+    final String? videoUrl = post.videoUrl;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title != null && title.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Text(title, style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+            ),
+          if (content != null && content.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: ExpandableText(
+                content,
+                trimLines: 3,
+                style: textTheme.bodyMedium?.copyWith(fontSize: 15.0, color: Colors.grey[800]),
+              ),
+            ),
+          if (post.type == PostType.image && thumbnail != null && thumbnail.isNotEmpty)
+            AspectRatio(
+              aspectRatio: 16 / 9, // Common aspect ratio for images
+              child: Image.network(
+                thumbnail,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const Center(child: CircularProgressIndicator());
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  return const Center(child: Icon(Icons.broken_image, color: Colors.grey, size: 40));
+                },
+              ),
+            ),
+          if (post.type == PostType.video && videoUrl != null && videoUrl.isNotEmpty)
+            if (isPlayerInitialized && videoPlayerController != null && videoPlayerController!.value.isInitialized)
+              AspectRatio(
+                aspectRatio: videoPlayerController!.value.aspectRatio, // This ! is safe due to videoPlayerController.value.isInitialized
+                child: VideoPlayer(videoPlayerController!), // This ! is safe due to videoPlayerController.value.isInitialized
+              )
+            else if (thumbnail != null && thumbnail.isNotEmpty) // Show thumbnail while video loads or if it fails
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Image.network(
+                      thumbnail,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Center(child: Icon(Icons.ondemand_video, color: Colors.grey, size: 40));
+                      },
+                    ),
+                    // Optionally, show a play icon or loading indicator
+                    if(!isPlayerInitialized) const CircularProgressIndicator() else const Icon(Icons.play_circle_fill, color: Colors.white70, size: 60),
+                  ],
+                ),
+              )
+            else // Fallback if video is not initialized and no thumbnail
+              Container(
+                height: 200,
+                color: Colors.grey[300],
+                child: const Center(child: Icon(Icons.videocam_off_outlined, color: Colors.grey, size: 50)),
+              ),
+          if (tags != null && tags.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Wrap(
+                spacing: 6.0,
+                runSpacing: 4.0,
+                children: tags.map((tag) => Chip(
+                  label: Text('#$tag', style: textTheme.bodySmall?.copyWith(color: Theme.of(context).primaryColor)),
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 0.0),
+                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                  side: BorderSide.none,
+                )).toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PostCardFooter extends StatelessWidget {
+  final Post post;
+  final bool isLiked;
+  final int likesCount;
+  final VoidCallback onLikeTap;
+  final VoidCallback onCommentTap;
+  final VoidCallback onShareTap;
+
+  const _PostCardFooter({
+    required this.post,
+    required this.isLiked,
+    required this.likesCount,
+    required this.onLikeTap,
+    required this.onCommentTap,
+    required this.onShareTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0), // Reduced horizontal padding for button touch area
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _FooterButton(
+            icon: isLiked ? Icons.favorite : Icons.favorite_border,
+            label: NumberFormatter.formatCount(likesCount), // Use local likesCount
+            iconColor: isLiked ? Colors.red : Colors.grey[700],
+            onPressed: onLikeTap,
+          ),
+          _FooterButton(
+            icon: Icons.chat_bubble_outline,
+            label: NumberFormatter.formatCount(post.commentsCount),
+            onPressed: onCommentTap,
+          ),
+          _FooterButton(
+            icon: Icons.share_outlined,
+            label: NumberFormatter.formatCount(post.shares),
+            onPressed: onShareTap,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FooterButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  final Color? iconColor;
+
+  const _FooterButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.iconColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      icon: Icon(icon, size: 20, color: iconColor ?? Colors.grey[700]),
+      label: Text(label, style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }

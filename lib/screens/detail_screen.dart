@@ -1,281 +1,235 @@
-import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:video_player/video_player.dart';
-import 'package:uuid/uuid.dart';
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart'; // Keep if you use VideoPlayer
+
+import '../models/comment.dart'; // Make sure this path is correct
+// import 'package:uuid/uuid.dart'; // Keep if you generate IDs client-side for comments before sending to API
+
 import '../models/post.dart';
 import '../models/post_type.dart';
-import '../models/comment.dart';
-import '../services/cache_service.dart';
-import '../widgets/comment_item.dart';
-import '../screens/user_profile_screen.dart';
+import '../models/user.dart'; // Placeholder for your User model
+import '../repositories/post_repository.dart'; // Correct path
+import '../screens/user_profile_screen.dart'; // Keep if you use this
+import '../services/database_helper.dart'; // Correct path
+import '../widgets/comment_item.dart'; // Keep if you use this
 
 class DetailScreen extends StatefulWidget {
-  final Post post;
+  final String postId; // Changed from Post object to postId
 
-  const DetailScreen({super.key, required this.post});
+  const DetailScreen({super.key, required this.postId});
 
   @override
   State<DetailScreen> createState() => _DetailScreenState();
 }
 
-class _DetailScreenState extends State<DetailScreen> {  late VideoPlayerController _videoController;
-  final TextEditingController _commentController = TextEditingController();
-  final CacheService _cacheService = CacheService.instance;
-  final _uuid = Uuid();
-  
-  bool _isPlaying = false;
-  bool _isControllerInitialized = false;
+class _DetailScreenState extends State<DetailScreen> {
+  late PostRepository _postRepository;
+  final DatabaseHelper _dbHelper = DatabaseHelper
+      .instance; // Keep if repository needs it directly or for other local ops
+
+  Post? _post;
+  List<Comment> _comments = [];
+  User? _currentUser; // To store the current user details
+
+  bool _isLoadingPost = true;
   bool _isLoadingComments = false;
   bool _isPostingComment = false;
-  String? _commentError;
-  String? _replyToComment;
-  
-  int _likes = 0;
-  int _dislikes = 0;
-  int _shares = 0;
-  bool _isLiked = false;
-  bool _isDisliked = false;
-  
-  List<Comment> _comments = [];
-  Map<String, List<Comment>> _commentReplies = {};
-  Map<String, bool> _expandedComments = {};
+  final TextEditingController _commentController = TextEditingController();
+
+  // VideoPlayer specific fields (keep if your Post model and UI support video)
+  VideoPlayerController? _videoPlayerController;
+  bool _isVideoPlayerInitialized = false;
+
+  // At the top of _DetailScreenState class
+  Comment? _replyingToComment; // Stores the comment being replied to
+  final FocusNode _commentFocusNode = FocusNode(); // To manage focus on the comment text field
 
   @override
   void initState() {
     super.initState();
-    _likes = widget.post.likes;
-    _dislikes = widget.post.dislikes;
-    _shares = widget.post.shares;
-    
-    if (widget.post.type == PostType.video && widget.post.videoUrl != null) {
-      _initializeVideoPlayer();
-    }
-    
-    _loadComments();
-    _loadInteractionState();
+    _postRepository = PostRepository(_dbHelper); // Initialize repository
+    _fetchCurrentUserThenLoadData();
   }
 
-  Future<void> _initializeVideoPlayer() async {
-    _videoController = VideoPlayerController.network(widget.post.videoUrl!);
-    try {
-      await _videoController.initialize();
-      setState(() {
-        _isControllerInitialized = true;
-      });
-    } catch (e) {
-      debugPrint('Error initializing video player: $e');
-    }
-  }
+  Future<void> _fetchCurrentUserThenLoadData() async {
+    // TODO: Implement your actual logic to get the current user
+    // This might involve checking SharedPreferences, an auth service, etc.
+    // For now, using a placeholder or allowing null.
+    _currentUser = await _getCurrentUser(); // Implement this function
 
-  Future<void> _loadInteractionState() async {
-    try {
-      final interactions = await _cacheService.getPostInteractionState(widget.post.id);
+    // After attempting to get the user, load post and comments
+    await _loadPostDetails();
+    if (_post != null) {
+      // Initialize video player if the post is a video
+      if (_post!.type == PostType.video &&
+          _post!.videoUrl != null &&
+          _post!.videoUrl!.isNotEmpty) {
+        _initializeVideoPlayer(_post!.videoUrl!);
+      }
+      await _loadInitialComments(); // Load comments only after post is loaded
+    } else {
       if (mounted) {
         setState(() {
-          _isLiked = interactions['isLiked'] ?? false;
-          _isDisliked = interactions['isDisliked'] ?? false;
-          if (_isLiked) _likes++;
-          if (_isDisliked) _dislikes++;
+          _isLoadingPost = false; // Stop loading if post is null
+        });
+      }
+    }
+  }
+
+  Future<User?> _getCurrentUser() async {
+    // Replace with your actual auth logic to get user details
+    // For example, fetch from a global state, SharedPreferences, or an auth service.
+    // Placeholder:
+    // return User(id: "user_123", name: "Current User", avatarUrl: "https://example.com/avatar.png");
+    print("TODO: Implement _getCurrentUser in DetailScreen");
+    // For now, let's simulate a logged-in user for testing purposes
+    // In a real app, this would come from your auth system.
+    return User(
+        id: "simulated_user_id_123",
+        name: "Simulated User",
+        avatar: "https://picsum.photos/seed/simulated_user/100/100", // Example avatar
+        // Add other fields your User model might have, e.g., bio, followers, etc.
+        // For example:
+        // bio: "A simulated user for testing.",
+        followers: 100,
+        following: 50,
+        posts: 10,
+    );
+    // return null; // Return null if no user is logged in
+  }
+
+  Future<void> _initializeVideoPlayer(String videoUrl) async {
+    _videoPlayerController = VideoPlayerController.networkUrl(
+      Uri.parse(videoUrl),
+    );
+    try {
+      await _videoPlayerController!.initialize();
+      if (mounted) {
+        setState(() {
+          _isVideoPlayerInitialized = true;
         });
       }
     } catch (e) {
-      debugPrint('Error loading interaction state: $e');
+      debugPrint('Error initializing video player in DetailScreen: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Error loading video.')));
+      }
     }
   }
 
-  Future<void> _loadComments() async {
-    if (_isLoadingComments) return;
-    
+  Future<void> _loadPostDetails() async {
+    if (!mounted) return;
     setState(() {
-      _isLoadingComments = true;
-      _commentError = null;
+      _isLoadingPost = true;
     });
-
     try {
-      final comments = await _cacheService.getComments(widget.post.id);
+      final postData = await _postRepository.getPostById(
+        widget.postId,
+        userId: _currentUser?.id,
+      );
       if (mounted) {
         setState(() {
-          _comments = comments;
+          _post = postData;
+          _isLoadingPost = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load post details: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingPost = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load post: ${e.toString()}')),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadInitialComments() async {
+    await _refreshComments(showLoadingIndicator: true);
+  }
+
+  Future<void> _refreshComments({
+    bool forceRemote = false,
+    bool showLoadingIndicator = false,
+  }) async {
+    if (!mounted || _post == null) return;
+    if (showLoadingIndicator) {
+      setState(() {
+        _isLoadingComments = true;
+      });
+    }
+    try {
+      final commentsData = await _postRepository.getCommentsForPost(
+        widget.postId,
+        forceRefresh: forceRemote,
+      );
+      if (mounted) {
+        setState(() {
+          _comments = commentsData;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load comments: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load comments: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted && showLoadingIndicator) {
+        setState(() {
           _isLoadingComments = false;
         });
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _commentError = '加载评论失败';
-          _isLoadingComments = false;
-        });
-      }
     }
   }
 
-  void _toggleCommentReplies(String commentId) async {
-    setState(() {
-      _expandedComments[commentId] = !(_expandedComments[commentId] ?? false);
-    });
+  Future<void> _submitComment() async {
+    final text = _commentController.text.trim();
+    if (text.isEmpty || _post == null) return;
 
-    if (_expandedComments[commentId] == true && 
-        (!_commentReplies.containsKey(commentId) || _commentReplies[commentId]!.isEmpty)) {
-      try {
-        final replies = await _cacheService.getCommentReplies(commentId);
-        if (mounted) {
-          setState(() {
-            _commentReplies[commentId] = replies;
-          });
-        }
-      } catch (e) {
-        debugPrint('Error loading replies: $e');
-      }
+    if (_currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to comment.')),
+      );
+      return;
     }
-  }
-
-  void _handleReply(Comment comment) {
-    _replyToComment = comment.id;
-    _commentController.text = '@${comment.userName} ';
-    _commentController.selection = TextSelection.fromPosition(
-      TextPosition(offset: _commentController.text.length),
-    );
-    FocusScope.of(context).requestFocus();
-  }
-
-  void _handleCommentLike(String commentId, bool isLiked) async {
-    try {
-      await _cacheService.updateCommentLike(commentId, isLiked);
-      _loadComments();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(isLiked ? '点赞失败' : '取消点赞失败')),
-        );
-      }
-    }
-  }
-
-  void _togglePlay() {
-    setState(() {
-      _isPlaying = !_isPlaying;
-      _isPlaying ? _videoController.play() : _videoController.pause();
-    });
-  }
-
-  void _handleLongPressStart() {
-    if (_isControllerInitialized && !_isPlaying) {
-      _togglePlay();
-    }
-  }
-
-  void _handleLongPressEnd() {
-    if (_isControllerInitialized && _isPlaying) {
-      _togglePlay();
-    }
-  }
-
-  Future<void> _handleLike() async {
-    if (_isDisliked) {
-      setState(() {
-        _isDisliked = false;
-        _dislikes = widget.post.dislikes;
-      });
-    }
-    
-    try {
-      setState(() {
-        _isLiked = !_isLiked;
-        _likes = widget.post.likes + (_isLiked ? 1 : 0);
-      });
-
-      await _cacheService.updatePostInteraction(widget.post.id, _isLiked, false);
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_isLiked ? '点赞成功' : '已取消点赞')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLiked = !_isLiked;
-          _likes = widget.post.likes + (_isLiked ? 1 : 0);
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败')),
-        );
-      }
-    }
-  }
-
-  Future<void> _handleDislike() async {
-    if (_isLiked) {
-      setState(() {
-        _isLiked = false;
-        _likes = widget.post.likes;
-      });
-    }
-    
-    try {
-      setState(() {
-        _isDisliked = !_isDisliked;
-        _dislikes = widget.post.dislikes + (_isDisliked ? 1 : 0);
-      });
-
-      await _cacheService.updatePostInteraction(widget.post.id, false, _isDisliked);
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_isDisliked ? '已踩' : '已取消踩')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isDisliked = !_isDisliked;
-          _dislikes = widget.post.dislikes + (_isDisliked ? 1 : 0);
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败')),
-        );
-      }
-    }
-  }
-
-  Future<void> _handleShare() async {
-    setState(() => _shares++);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('分享成功')),
-    );
-  }
-
-  Future<void> _handlePostComment() async {
-    if (_commentController.text.isEmpty) return;
 
     setState(() {
       _isPostingComment = true;
     });
 
     try {
-      final newComment = Comment(
-        id: _uuid.v4(),
-        postId: widget.post.id,
-        userId: 'current_user', // 这里应该使用真实的用户ID
-        userName: '当前用户', // 这里应该使用真实的用户名
-        userAvatar: 'https://example.com/avatar.png', // 这里应该使用真实的用户头像
-        content: _commentController.text,
-        timestamp: DateTime.now(),
-        parentId: _replyToComment,
+      // Assuming _currentUser is not null due to the check above
+      final newComment = await _postRepository.addComment(
+        postId: _post!.id,
+        userId: _currentUser!.id,
+        userName: _currentUser!.name,
+        userAvatar: _currentUser!.avatar, // User model's avatar field might be nullable
+        commentText: text,
       );
-      
-      await _cacheService.saveComment(newComment);
-      _commentController.clear();
-      _replyToComment = null;
-      await _loadComments();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('评论发布成功')),
-      );
+      if (newComment != null) {
+        _commentController.clear();
+        setState(() {
+          _replyingToComment = null; // Clear reply state after successful comment
+        });
+        await _refreshComments(
+          forceRemote: true,
+        ); // Refresh to see the new comment
+      } else {
+        throw Exception("Failed to post comment, repository returned null.");
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('评论发布失败')),
-      );
+      debugPrint('Failed to post comment: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to post comment: ${e.toString()}')),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -283,582 +237,485 @@ class _DetailScreenState extends State<DetailScreen> {  late VideoPlayerControll
         });
       }
     }
-  }  @override
-  void dispose() {
-    if (widget.post.type == PostType.video) {
-      _videoController.dispose();
+  }
+
+  // --- Like/Dislike Handlers ---
+  Future<void> _handleLike() async {
+    if (_post == null || _currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot like post. Data missing or not logged in.'),
+        ),
+      );
+      return;
     }
+    final originalPost = _post!;
+    final originalIsLiked = originalPost.isLikedByCurrentUser;
+    final originalLikes = originalPost.likes;
+
+    // Optimistic UI update
+    setState(() {
+      _post = _post!.copyWith(
+        isLikedByCurrentUser: !originalIsLiked,
+        likes: !originalIsLiked
+            ? originalLikes + 1
+            : (originalLikes > 0 ? originalLikes - 1 : 0),
+      );
+    });
+
+    try {
+      final success = await _postRepository.toggleLikeStatus(
+        userId: _currentUser!.id,
+        postId: _post!.id,
+        currentLikeStatus: originalIsLiked,
+      );
+      if (!success && mounted) { // If toggle failed, revert
+         setState(() {
+          _post = originalPost;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update like status. Please try again.')),
+        );
+      }
+      // Optionally, refresh post from repository to get server-confirmed state
+      // await _loadPostDetails();
+    } catch (e) {
+      debugPrint('Error toggling like: $e');
+      // Revert optimistic update on error
+      if (mounted) {
+        setState(() {
+          _post = originalPost;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update like status.')),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
     _commentController.dispose();
+    _videoPlayerController?.dispose();
+    _commentFocusNode.dispose();
     super.dispose();
   }
 
-  Widget _buildMediaContent() {
-    if (widget.post.type == PostType.video && _isControllerInitialized) {
-      return AspectRatio(
-        aspectRatio: _videoController.value.aspectRatio,
-        child: Stack(
-          children: [
-            GestureDetector(
-              onTap: _togglePlay,
-              onLongPressStart: (_) => _handleLongPressStart(),
-              onLongPressEnd: (_) => _handleLongPressEnd(),
-              child: VideoPlayer(_videoController),
-            ),
-            AnimatedOpacity(
-              opacity: !_isPlaying || _videoController.value.position == Duration.zero ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 300),
-              child: Center(
-                child: Icon(
-                  _isPlaying ? Icons.pause : Icons.play_arrow,
-                  size: 64,
-                  color: Colors.white.withOpacity(0.8),
-                ),
-              ),
-            ),
-            if (_isControllerInitialized)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: ValueListenableBuilder(
-                  valueListenable: _videoController,
-                  builder: (context, value, child) {
-                    return VideoProgressIndicator(
-                      _videoController,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(
-                        playedColor: Colors.red,
-                        bufferedColor: Colors.grey,
-                        backgroundColor: Colors.black45,
-                      ),
-                    );
-                  },
-                ),
-              ),
-          ],
-        ),
-      );
-    } else if (widget.post.type == PostType.image && widget.post.thumbnail != null) {
-      return CachedNetworkImage(
-        imageUrl: widget.post.thumbnail!,
-        width: double.infinity,
-        fit: BoxFit.cover,
+  // --- UI Building Methods ---
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoadingPost || _post == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Loading...')),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
-    return const SizedBox.shrink();
-  }
 
-  Widget _buildCommentSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    // Post is loaded, build the detail UI
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_post!.title ?? 'Details'), // FIX: Handle null title
+        // Add other actions if needed
+      ),
+      body: Column(
         children: [
-          const Text(
-            '评论',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildMediaContent(),
+                  _buildPostHeader(),
+                  _buildPostContentDetails(),
+                  _buildInteractionButtons(),
+                  const Divider(),
+                  _buildCommentsList(),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 16),
-          _isLoadingComments
-              ? const Center(child: CircularProgressIndicator())
-              : _commentError != null
-                  ? Center(child: Text(_commentError!))
-                  : Column(
-                      children: _comments.map((comment) {
-                        return Column(
-                          children: [
-                            CommentItem(
-                              comment: comment,
-                              onReplyTap: () => _handleReply(comment),
-                              onLikeChanged: (isLiked) =>
-                                  _handleCommentLike(comment.id, isLiked),
-                            ),
-                            if (comment.replyCount > 0)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 56),
-                                child: TextButton(
-                                  onPressed: () => _toggleCommentReplies(comment.id),
-                                  child: Text(
-                                    _expandedComments[comment.id] ?? false
-                                        ? '收起回复'
-                                        : '查看${comment.replyCount}条回复',
-                                  ),
-                                ),
-                              ),
-                            if (_expandedComments[comment.id] ?? false)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 56),
-                                child: Column(
-                                  children: _commentReplies[comment.id]?.map((reply) =>
-                                    CommentItem(
-                                      comment: reply,
-                                      onReplyTap: () => _handleReply(reply),
-                                      onLikeChanged: (isLiked) =>
-                                          _handleCommentLike(reply.id, isLiked),
-                                    ),
-                                  ).toList() ?? [],
-                                ),
-                              ),
-                          ],
-                        );
-                      }).toList(),
-                    ),
+          _buildCommentInput(),
         ],
       ),
     );
   }
-  // 移除 _formatTimestamp 方法，使用 DateFormatter 工具类
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.post.title),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_horiz),
-            onPressed: () {
-              showModalBottomSheet(
-                context: context,
-                builder: (context) => SafeArea(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.share),
-                        title: const Text('分享'),
-                        onTap: () {
-                          Navigator.pop(context);
-                          // TODO: 实现分享功能
-                        },
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.flag_outlined),
-                        title: const Text('举报'),
-                        onTap: () {
-                          Navigator.pop(context);
-                          // TODO: 实现举报功能
-                        },
-                      ),
-                    ],
+
+  Widget _buildMediaContent() {
+    if (_post!.type == PostType.video) {
+      if (_isVideoPlayerInitialized && _videoPlayerController != null) {
+        return AspectRatio(
+          aspectRatio: _videoPlayerController!.value.aspectRatio,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              VideoPlayer(_videoPlayerController!),
+              IconButton(
+                icon: Icon(
+                  _videoPlayerController!.value.isPlaying
+                      ? Icons.pause
+                      : Icons.play_arrow,
+                  color: Colors.white,
+                  size: 50,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _videoPlayerController!.value.isPlaying
+                        ? _videoPlayerController!.pause()
+                        : _videoPlayerController!.play();
+                  });
+                },
+              ),
+            ],
+          ),
+        );
+      } else {
+        // Show placeholder or loading for video
+        return Container(
+          height: 200,
+          color: Colors.black,
+          child: const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+        );
+      }
+    } else if (_post!.type == PostType.image && _post!.thumbnail != null) {
+      // Safe: thumbnail is checked for null before use
+      return CachedNetworkImage(
+        imageUrl: _post!.thumbnail!,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(
+          height: 200,
+          color: Colors.grey[300],
+          child: const Center(child: CircularProgressIndicator()),
+        ),
+        errorWidget: (context, url, error) => Container(
+          height: 200,
+          color: Colors.grey[300],
+          child: const Icon(Icons.error),
+        ),
+      );
+    }
+    return const SizedBox.shrink(); // For text posts or if no media
+  }
+
+  Widget _buildPostHeader() {
+    // Assuming _post is not null here, as it's checked in the main build method.
+    final authorAvatar = _post!.authorAvatar; // authorAvatar is nullable
+
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () {
+              // authorId is non-nullable in Post model.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => UserProfileScreen(
+                    userId: _post!.authorId, // authorId is non-nullable
+                    userName: _post!.authorName, // authorName is non-nullable
+                    userAvatar: authorAvatar, // Pass the nullable authorAvatar
                   ),
                 ),
+              );
+            },
+            child: CircleAvatar(
+              backgroundImage: (authorAvatar != null && authorAvatar.isNotEmpty)
+                  ? CachedNetworkImageProvider(authorAvatar)
+                  : null,
+              child: (authorAvatar == null || authorAvatar.isEmpty)
+                  ? const Icon(Icons.person)
+                  : null,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _post!.authorName, // authorName is non-nullable
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                // publishTime is non-nullable in Post model.
+                Text(
+                  _formatDateTime(_post!.publishTime),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          // Add follow button or other actions if needed
+        ],
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime dt) {
+    // Simple date formatting, replace with `intl` package for more complex needs
+    return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+  }
+
+  Widget _buildPostContentDetails() {
+    // content is nullable in Post model. Use ?? to provide a default.
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Text(
+        _post!.content ?? '', // Provide default empty string if content is null
+        style: const TextStyle(fontSize: 15, height: 1.5),
+      ),
+    );
+  }
+
+  Widget _buildInteractionButtons() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          TextButton.icon(
+            icon: Icon(
+              _post!.isLikedByCurrentUser // Non-nullable in Post
+                  ? Icons.thumb_up
+                  : Icons.thumb_up_outlined,
+              color: _post!.isLikedByCurrentUser
+                  ? Theme.of(context).primaryColor
+                  : Colors.grey,
+            ),
+            label: Text(
+              '${_post!.likes} Likes', // likes is non-nullable
+              style: TextStyle(
+                color: _post!.isLikedByCurrentUser
+                    ? Theme.of(context).primaryColor
+                    : Colors.grey,
+              ),
+            ),
+            onPressed: _handleLike,
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.comment_outlined, color: Colors.grey),
+            label: Text(
+              // Displaying loaded comments count, not from _post.commentsCount
+              // to reflect the currently visible list.
+              '${_comments.length} Comments',
+              style: const TextStyle(color: Colors.grey),
+            ),
+            onPressed: () {
+              FocusScope.of(context).requestFocus(_commentFocusNode);
+            },
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.share_outlined, color: Colors.grey),
+            label: Text(
+              '${_post!.shares} Shares', // shares is non-nullable
+              style: const TextStyle(color: Colors.grey),
+            ),
+            onPressed: () {
+              // TODO: Implement share functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Share tapped (not implemented)')),
               );
             },
           ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [          // 媒体内容区
-          _buildMediaContent(),
-          // 内容区
-          if (widget.post.type == PostType.text)
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text(widget.post.content),
-            ),
-          // 用户信息和互动区域
-          ListTile(
-            leading: GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => UserProfileScreen(
-                      userId: widget.post.authorId ?? widget.post.authorName,
-                      userName: widget.post.authorName,
-                      userAvatar: widget.post.authorAvatar,
-                    ),
-                  ),
-                );
-              },
-              child: CircleAvatar(
-                backgroundImage: CachedNetworkImageProvider(widget.post.authorAvatar),
-              ),
-            ),
-            title: GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => UserProfileScreen(
-                      userId: widget.post.authorId ?? widget.post.authorName,
-                      userName: widget.post.authorName,
-                      userAvatar: widget.post.authorAvatar,
-                    ),
-                  ),
-                );
-              },
-              child: Text(widget.post.authorName),
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.person_add_outlined),
-              onPressed: () {
-                // TODO: 实现关注功能
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('关注成功')),
-                );
-              },
-            ),
-          ),          // 互动按钮区域
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildActionButton(
-                  icon: _isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                  label: _likes.toString(),
-                  onPressed: _handleLike,
-                  isActive: _isLiked,
-                ),
-                _buildActionButton(
-                  icon: _isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                  label: _dislikes.toString(),
-                  onPressed: _handleDislike,
-                  isActive: _isDisliked,
-                ),
-                _buildActionButton(
-                  icon: Icons.share_outlined,
-                  label: _shares.toString(),
-                  onPressed: _handleShare,
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
-        // 评论区标题
-          Container(
-            padding: const EdgeInsets.all(16.0),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              border: Border(
-                bottom: BorderSide(
-                  color: Theme.of(context).dividerColor,
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '评论 ${_comments.length}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                TextButton.icon(
-                  onPressed: () => _loadComments(),
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('刷新'),
-                ),
-              ],
-            ),
-          ),
-          // 评论列表
+    );
+  }
+
+  Widget _buildCommentsList() {
+    if (_isLoadingComments) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_comments.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(child: Text('No comments yet. Be the first to comment!')),
+      );
+    }
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: _comments.length,
+      itemBuilder: (context, index) {
+        final comment = _comments[index];
+        return CommentItem(
+          comment: comment,
+          onReplyTap: () => _replyToComment(comment),
+          onLikeChanged: (isLiked) => _likeComment(comment, isLiked),
+        );
+      },
+    );
+  }
+
+  void _replyToComment(Comment comment) {
+    if (_currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to reply.')),
+      );
+      return;
+    }
+    setState(() {
+      _replyingToComment = comment;
+      // userName is non-nullable in Comment model.
+      _commentController.text = '@${comment.userName} ';
+      _commentController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _commentController.text.length),
+      );
+    });
+    FocusScope.of(context).requestFocus(_commentFocusNode);
+    print("Replying to comment ID: ${comment.id} by ${comment.userName}");
+  }
+
+  Future<void> _likeComment(Comment comment, bool newLikeStatus) async {
+    if (_post == null || _currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Please log in or ensure post data is loaded.')),
+      );
+      return;
+    }
+
+    final commentIndex = _comments.indexWhere((c) => c.id == comment.id);
+    if (commentIndex == -1) return;
+
+    // For optimistic UI update, you need to ensure your Comment model
+    // has fields like 'isLiked' and 'likes'.
+    final originalComment = _comments[commentIndex];
+    final updatedComment = originalComment.copyWith(
+      isLiked: newLikeStatus,
+      // Example: Assumes 'isLiked' exists on Comment model
+      likes: newLikeStatus
+          ? (originalComment.likes + 1) // Assumes 'likes' exists
+          : (originalComment.likes > 0 ? originalComment.likes - 1 : 0),
+    );
+
+    setState(() {
+      _comments[commentIndex] = updatedComment;
+    });
+
+    // TODO: Implement actual repository call to toggle comment like status
+    try {
+      await _postRepository.toggleCommentLikeStatus(
+        userId: _currentUser!.id,
+        commentId: comment.id,
+        currentLikeStatus: newLikeStatus,
+      );
+      // Optionally, refresh comments to get confirmed server state,
+      // or rely on the optimistic update if toggleCommentLikeStatus returns the updated comment.
+    } catch (e) {
+      debugPrint('Error toggling comment like: $e');
+      // Revert optimistic update
+      setState(() {
+        _comments[commentIndex] = originalComment;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update comment like.')),
+        );
+        //   }
+        // }
+
+        // Placeholder until Comment model and repository are fully updated
+        print("Placeholder: User ${_currentUser!.id} ${newLikeStatus
+            ? 'liked'
+            : 'unliked'} comment ${comment.id}.");
+        print(
+            "INFO: Comment like/unlike UI shown optimistically if CommentItem handles it.");
+        print(
+            "INFO: Actual persistence of comment like needs Comment model updates (isLiked, likes) and PostRepository.toggleCommentLikeStatus implementation.");
+      }
+    }
+  }
+
+
+  Widget _buildCommentInput() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        border: Border(top: BorderSide(color: Colors.grey[300]!, width: 0.5)),
+      ),
+      child: Row(
+        children: [
           Expanded(
-            child: _isLoadingComments
-                ? const Center(child: CircularProgressIndicator())
-                : _commentError != null
-                    ? Center(child: Text(_commentError!))
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        itemCount: _comments.length,
-                        itemBuilder: (context, index) {
-                          final comment = _comments[index];
-                          return Column(
-                            children: [
-                              CommentItem(
-                                comment: comment,
-                                onReplyTap: () => _handleReply(comment),
-                                onLikeChanged: (isLiked) => _handleCommentLike(comment.id, isLiked),
-                              ),
-                              if (comment.replyCount > 0)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 56.0),                                  child: TextButton.icon(
-                                    onPressed: () => _toggleCommentReplies(comment.id),
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                      minimumSize: const Size.fromHeight(36),
-                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                    icon: Icon(
-                                      _expandedComments[comment.id] ?? false
-                                          ? Icons.keyboard_arrow_up
-                                          : Icons.keyboard_arrow_down,
-                                      size: 18,
-                                    ),
-                                    label: Text(
-                                      _expandedComments[comment.id] ?? false
-                                          ? '收起回复'
-                                          : '查看 ${comment.replyCount} 条回复',
-                                      style: const TextStyle(fontSize: 13),
-                                    ),
-                                  ),
-                                ),                              if (_expandedComments[comment.id] ?? false)
-                                Container(
-                                  margin: const EdgeInsets.only(left: 56.0),
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      left: BorderSide(
-                                        color: Colors.grey[300]!,
-                                        width: 2,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Column(
-                                    children: _commentReplies[comment.id]?.map((reply) => CommentItem(
-                                      comment: reply,
-                                      isReply: true,
-                                      onLikeChanged: (isLiked) => _handleCommentLike(reply.id, isLiked),
-                                    )).toList() ?? [],
-                                  ),
-                                ),
-                            ],
-                          );
-                        },
-                      ),
-          ),
-        // 底部评论框和交互按钮
-          SafeArea(
-            child: Container(
-              padding: const EdgeInsets.all(8.0),
-              decoration: BoxDecoration(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-                border: Border(
-                  top: BorderSide(
-                    color: Theme.of(context).dividerColor,
-                    width: 0.5,
-                  ),
+            child: TextField(
+              focusNode: _commentFocusNode,
+              controller: _commentController,
+              decoration: InputDecoration(
+                hintText: _replyingToComment != null
+                    ? 'Reply to @${_replyingToComment!.userName}...'
+                    : 'Add a comment...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  borderSide: BorderSide.none,
                 ),
+                filled: true,
+                fillColor: Colors.grey[200],
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10, // Adjusted padding for better look
+                ),
+                suffixIcon: _replyingToComment != null
+                  ? IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        setState(() {
+                          _replyingToComment = null;
+                          _commentController.clear();
+                        });
+                        FocusScope.of(context).unfocus(); // Unfocus to hide keyboard
+                      },
+                    )
+                  : null,
               ),
-              child: Row(
-                children: [
-                  // 输入框
-                  Expanded(
-                    child: Container(
-                      height: 40,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: TextField(
-                        controller: _commentController,
-                        decoration: InputDecoration(
-                          hintText: '写下你的评论...',
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                        ),
-                        onChanged: (value) => setState(() {}),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // 点赞按钮
-                  _buildActionIconButton(
-                    icon: _isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                    label: _likes.toString(),
-                    onPressed: _handleLike,
-                    isActive: _isLiked,
-                  ),
-                  // 踩按钮
-                  _buildActionIconButton(
-                    icon: _isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                    label: _dislikes.toString(),
-                    onPressed: _handleDislike,
-                    isActive: _isDisliked,
-                  ),
-                  // 分享按钮
-                  _buildActionIconButton(
-                    icon: Icons.share_outlined,
-                    label: _shares.toString(),
-                    onPressed: _handleShare,
-                  ),
-                  if (_commentController.text.isNotEmpty)
-                    _isPostingComment
-                        ? const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 12),
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : IconButton(
-                            icon: const Icon(Icons.send),
-                            color: Theme.of(context).primaryColor,
-                            onPressed: _handlePostComment,
-                          ),
-                ],
-              ),
+              minLines: 1,
+              maxLines: 5, // Allow more lines for longer comments
+              textInputAction: TextInputAction.send, // Show send button on keyboard
+              onSubmitted: (text) => _submitComment(), // Submit on keyboard send
             ),
           ),
+          const SizedBox(width: 8),
+          _isPostingComment
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  icon: Icon(Icons.send, color: Theme.of(context).primaryColor),
+                  onPressed: _submitComment,
+                ),
         ],
       ),
     );
   }
-  Widget _buildPostHeader() {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-      leading: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => UserProfileScreen(
-              userId: widget.post.authorId ?? widget.post.authorName,
-              userName: widget.post.authorName,
-              userAvatar: widget.post.authorAvatar,
-            ),
-          ),
-        ),
-        child: CircleAvatar(
-          backgroundImage: CachedNetworkImageProvider(widget.post.authorAvatar),
-        ),
-      ),
-      title: Text(widget.post.authorName),
-      subtitle: Text(
-        '发布时间：${widget.post.publishTime?.toString().split('.').first ?? '未知'}',
-      ),
-    );
-  }
-
-  Widget _buildPostContent() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        widget.post.content,
-        style: const TextStyle(fontSize: 16),
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onPressed,
-    bool isActive = false,
-  }) {
-    final color = isActive ? Theme.of(context).primaryColor : Colors.grey;
-    return TextButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, color: color),
-      label: Text(label, style: TextStyle(color: color)),
-    );
-  }
-
-  Widget _buildBottomBar() {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                _buildActionButton(
-                  icon: _isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                  label: _likes.toString(),
-                  onPressed: _handleLike,
-                  isActive: _isLiked,
-                ),
-                _buildActionButton(
-                  icon: _isDisliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                  label: _dislikes.toString(),
-                  onPressed: _handleDislike,
-                  isActive: _isDisliked,
-                ),
-                _buildActionButton(
-                  icon: Icons.share_outlined,
-                  label: _shares.toString(),
-                  onPressed: _handleShare,
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () => _loadComments(),
-                  icon: const Icon(Icons.comment_outlined),
-                  label: Text('${_comments.length}'),
-                ),
-              ],
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _commentController,
-                      decoration: const InputDecoration(
-                        hintText: '添加评论...',
-                        border: InputBorder.none,
-                      ),
-                      onChanged: (value) => setState(() {}),
-                    ),
-                  ),
-                  if (_commentController.text.isNotEmpty)
-                    IconButton(
-                      icon: _isPostingComment
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send),
-                      onPressed: _handlePostComment,
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionIconButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onPressed,
-    bool isActive = false,
-  }) {
-    final color = isActive ? Theme.of(context).primaryColor : Colors.grey[600];
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
+
+// Ensure you have a User model defined, e.g., in models/user.dart
+// (This is just a reference, your actual User model might be different)
+// class User {
+//   final String id;
+//   final String name;
+//   final String? avatar; // Ensure this matches your User model's avatar field name
+//
+//   User({required this.id, required this.name, this.avatar});
+//
+//   // If your User model has a factory fromMap or other constructors, ensure they are correct.
+//   // Example:
+//   // factory User.fromMap(Map<String, dynamic> map) {
+//   //   return User(
+//   //     id: map['id'] as String,
+//   //     name: map['name'] as String,
+//   //     avatar: map['avatar'] as String?,
+//   //   );
+//   // }
+// }
