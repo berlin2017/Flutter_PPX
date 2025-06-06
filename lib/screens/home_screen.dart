@@ -601,9 +601,6 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                         return PostCard(
                           key: Key('post_${posts[postIndex].id}'),
                           post: posts[postIndex],
-                          onTap: () {
-                            // TODO: Handle post tap
-                          },
                         );
                       }
                       return null;

@@ -11,12 +11,11 @@ import 'package:video_player/video_player.dart';
 
 class PostCard extends StatefulWidget {
   final Post post;
-  final VoidCallback onTap;
 
   const PostCard({
     super.key,
     required this.post,
-    required this.onTap,
+    // Removed onTap parameter
   });
 
   @override
@@ -240,23 +239,31 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 作者信息（可点击跳转详情）
-          InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => DetailScreen(post: widget.post),
-                ),
-              );
-            },            child: ListTile(
+    return InkWell(  // Added InkWell for overall card tap
+      onTap: () {
+        // Stop video if playing before navigating
+        if (_isPlaying && _videoController != null) {
+          _videoController!.pause();
+          setState(() {
+            _isPlaying = false;
+          });
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DetailScreen(post: widget.post),
+          ),
+        );
+      },
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Author info - InkWell removed
+            ListTile(
               leading: GestureDetector(
-                onTap: () {
+                onTap: () { // Kept GestureDetector for profile navigation
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -272,7 +279,7 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                   backgroundImage: CachedNetworkImageProvider(widget.post.authorAvatar),
                 ),
               ),
-              title: GestureDetector(
+              title: GestureDetector( // Kept GestureDetector for profile navigation
                 onTap: () {
                   Navigator.push(
                     context,
@@ -289,24 +296,15 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
               ),
               subtitle: Text(widget.post.title),
             ),
-          ),
-          // 内容区域
-          if (widget.post.type == PostType.text)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(widget.post.content),
-            )
-          else if (widget.post.type == PostType.image)
-            InkWell(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => DetailScreen(post: widget.post),
-                  ),
-                );
-              },
-              child: CachedNetworkImage(
+            // Content area
+            if (widget.post.type == PostType.text)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(widget.post.content),
+              )
+            else if (widget.post.type == PostType.image)
+              // InkWell removed from CachedNetworkImage
+              CachedNetworkImage(
                 imageUrl: widget.post.thumbnail!,
                 width: double.infinity,
                 height: 200,
@@ -317,128 +315,119 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                 errorWidget: (context, url, error) => const Center(
                   child: Icon(Icons.error),
                 ),
-              ),
-            )          else if (widget.post.type == PostType.video)
-            GestureDetector(
-              onTap: () {
-                if (_videoController == null || !_isVideoInitialized) {
-                  _initializeVideoController().then((_) {
-                    if (mounted) {
-                      setState(() {
-                        _isPlaying = true;
-                        _videoController?.play();
-                      });
-                    }
-                  });
-                } else {
-                  _togglePlay();
-                }
-              },
-              onDoubleTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => DetailScreen(post: widget.post),
-                  ),
-                );
-              },
-              onLongPressStart: (_) => _handleLongPressStart(),
-              onLongPressEnd: (_) => _handleLongPressEnd(),
-              behavior: HitTestBehavior.opaque,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  if (_isVideoInitialized)
-                    AspectRatio(
-                      aspectRatio: _videoController!.value.aspectRatio,
-                      child: VideoPlayer(_videoController!),
+              )
+            else if (widget.post.type == PostType.video)
+              GestureDetector( // This GestureDetector handles video play/pause and prevents outer InkWell tap
+                onTap: () {
+                  if (_videoController == null || !_isVideoInitialized) {
+                    _initializeVideoController().then((_) {
+                      if (mounted) {
+                        setState(() {
+                          _isPlaying = true;
+                          _videoController?.play();
+                        });
+                      }
+                    });
+                  } else {
+                    _togglePlay();
+                  }
+                },
+                onDoubleTap: () { // Optional: Keep double tap for details as a shortcut
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => DetailScreen(post: widget.post),
                     ),
-                  if (!_isVideoInitialized || !_isPlaying)
-                    CachedNetworkImage(
-                      imageUrl: widget.post.thumbnail!,
-                      width: double.infinity,
-                      height: 300,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
+                  );
+                },
+                onLongPressStart: (_) => _handleLongPressStart(),
+                onLongPressEnd: (_) => _handleLongPressEnd(),
+                behavior: HitTestBehavior.opaque, // Crucial: Prevents tap from reaching the outer InkWell
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (_isVideoInitialized)
+                      AspectRatio(
+                        aspectRatio: _videoController!.value.aspectRatio,
+                        child: VideoPlayer(_videoController!),
+                      ),
+                    if (!_isVideoInitialized || !_isPlaying)
+                      CachedNetworkImage(
+                        imageUrl: widget.post.thumbnail!,
+                        width: double.infinity,
                         height: 300,
-                        color: Colors.grey[200],
-                        child: const Center(child: CircularProgressIndicator()),
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => Container(
+                          height: 300,
+                          color: Colors.grey[200],
+                          child: const Center(child: CircularProgressIndicator()),
+                        ),
+                        errorWidget: (context, url, error) => Container(
+                          height: 300,
+                          color: Colors.grey[200],
+                          child: const Center(child: Icon(Icons.error)),
+                        ),
                       ),
-                      errorWidget: (context, url, error) => Container(
-                        height: 300,
-                        color: Colors.grey[200],
-                        child: const Center(child: Icon(Icons.error)),
-                      ),
-                    ),
-                  // 播放/暂停按钮
-                  AnimatedOpacity(
-                    opacity: !_isPlaying || !_isVideoInitialized ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      width: 60,
-                      height: 60,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.5),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        _isPlaying ? Icons.pause : Icons.play_arrow,
-                        color: Colors.white,
-                        size: 36,
-                      ),
-                    ),
-                  ),
-                  // 进度条
-                  if (_isVideoInitialized)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
+                    // Play/Pause button
+                    AnimatedOpacity(
+                      opacity: !_isPlaying || !_isVideoInitialized ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
                       child: Container(
-                        color: Colors.black.withOpacity(0.5),
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          children: [
-                            const SizedBox(width: 8),
-                            ValueListenableBuilder(
-                              valueListenable: _videoController!,
-                              builder: (context, VideoPlayerValue value, child) {
-                                return Text(
-                                  '${value.position.inMinutes}:${(value.position.inSeconds % 60).toString().padLeft(2, '0')} / ${value.duration.inMinutes}:${(value.duration.inSeconds % 60).toString().padLeft(2, '0')}',
-                                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                                );
-                              },
-                            ),
-                            Expanded(
-                              child: VideoProgressIndicator(
-                                _videoController!,
-                                allowScrubbing: true,
-                                colors: const VideoProgressColors(
-                                  playedColor: Colors.red,
-                                  bufferedColor: Colors.white24,
-                                  backgroundColor: Colors.white12,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          _isPlaying ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 36,
                         ),
                       ),
                     ),
-                ],
-              ),
-            ),
-          // 互动按钮栏（可点击跳转详情）
-          InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => DetailScreen(post: widget.post),
+                    // Progress bar
+                    if (_isVideoInitialized)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          color: Colors.black.withOpacity(0.5),
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 8),
+                              ValueListenableBuilder(
+                                valueListenable: _videoController!,
+                                builder: (context, VideoPlayerValue value, child) {
+                                  return Text(
+                                    '${value.position.inMinutes}:${(value.position.inSeconds % 60).toString().padLeft(2, '0')} / ${value.duration.inMinutes}:${(value.duration.inSeconds % 60).toString().padLeft(2, '0')}',
+                                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                                  );
+                                },
+                              ),
+                              Expanded(
+                                child: VideoProgressIndicator(
+                                  _videoController!,
+                                  allowScrubbing: true,
+                                  colors: const VideoProgressColors(
+                                    playedColor: Colors.red,
+                                    bufferedColor: Colors.white24,
+                                    backgroundColor: Colors.white12,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              );
-            },
-            child: Padding(
+              ),
+            // Interaction buttons bar - InkWell removed
+            Padding(
               padding: const EdgeInsets.all(8.0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -475,8 +464,8 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

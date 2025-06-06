@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:video_app/screens/my_page.dart';
 import 'home_screen.dart';
 
 class MainScreen extends StatefulWidget {
@@ -22,7 +23,7 @@ class _MainScreenState extends State<MainScreen> {
       HomeScreen(key: _homeScreenKey),
       const Center(child: Text('发现')),
       const Center(child: Text('消息')),
-      const Center(child: Text('我的')),
+      const MyPageScreen(),
     ];
   }
 
